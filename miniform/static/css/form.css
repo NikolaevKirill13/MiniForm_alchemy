@@ -1,0 +1,109 @@
+/* ================= ОСНОВНЫЕ СТИЛИ ФОРМЫ ================= */
+label {
+  width: 150px;
+  display: inline-block;
+  vertical-align: top;
+  margin: 6px;
+}
+
+input {
+  height: 100%;
+  margin: 6px 0 6px 10px; /* Единые отступы для всех input */
+  box-sizing: border-box;
+  width: 249px;            /* Фиксированная ширина для всех */
+}
+
+textarea {
+  margin: 6px 0 6px 10px;  /* Выравнивание с другими элементами */
+  height: 100px;
+  width: 249px;
+}
+
+em {
+font-weight: bold;
+font-style: normal;
+color: #f55;
+}
+
+input[type=checkbox] {
+  margin: 10px;
+  width: 20px;
+  background: #ddd;
+}
+
+select {
+  display: inline-block;
+  height: 110%;
+  margin: 6px 0 6px 10px;  /* Унифицированные отступы */
+  box-sizing: border-box;
+  width: 249px;
+}
+
+/* ... остальные ваши стили без изменений ... */
+
+/* =============== СТИЛИ ДЛЯ ПОЛЗУНКА =============== */
+.form-group {
+  position: relative;
+  margin-bottom: 6px;      /* Минимальный отступ между группами */
+}
+
+input[type="range"] {
+  width: 249px;            /* Фиксированная ширина как у других полей */
+  margin: 6px 0 6px 10px;  /* Идентичные отступы */
+  background: #ddd;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.range-bubble {
+  position: absolute;
+  top: 2px;
+  margin-left: 10px;              /* Учет margin-left поля */
+  background: white;
+  border: 3px solid #4682B4;
+  border-radius: 50%;
+  min-width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  pointer-events: none;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  z-index: 100;
+  white-space: nowrap;
+  transform: translateX(585%); /* Новое позиционирование */
+}
+
+/* Скрытие стандартного бегунка */
+input[type="range"]::-webkit-slider-thumb { visibility: hidden; }
+
+/* Скрытие стандартного бегунка в Firefox */
+input[type="range"]::-moz-range-thumb {
+  opacity: 0; /* Прозрачность */
+  width: 0;   /* Обнуление размеров */
+  height: 0;
+  border: none;
+}
+
+@supports (-moz-appearance: auto) {
+.range-bubble {
+  position: absolute;
+  top: -2px;
+  margin-left: 10px;
+  background: white;
+  border: 3px solid #4682B4;
+  border-radius: 50%;
+  min-width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  pointer-events: none;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  z-index: 100;
+  white-space: nowrap;
+  transform: translateX(585%);
+  }
+}
