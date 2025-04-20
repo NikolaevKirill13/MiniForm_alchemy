@@ -1,13 +1,22 @@
 import asyncio
 import copy
+import datetime
 import enum
-import json
 
 import nest_asyncio
-from typing import Sequence, Type, List, Optional, Literal, Dict
+from typing import (
+    Sequence,
+    Union,
+    Type,
+    List,
+    Dict,
+    Optional,
+    Any,
+    Callable,
+)
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import class_mapper, DeclarativeBase
-from sqlalchemy.orm.decl_api import DeclarativeAttributeIntercept
 from sqlalchemy import (
     select,
     String,
@@ -20,8 +29,9 @@ from sqlalchemy import (
     Time,
     Text,
     Enum,
-    inspect,
 )
+from sqlalchemy.orm.decl_api import DeclarativeAttributeIntercept
+from starlette.datastructures import UploadFile, FormData
 
 from miniform.fields import *
 from miniform.widgets import *
@@ -29,44 +39,67 @@ from miniform.utils import get_class_name_with_table_name
 
 
 class BaseForm:
+    disabled = []
+    exclude = []
+    protect = []
+    hidden = []
+    readonly = []
+
     def __init__(self):
+        self.errors = None
         self._fields: Dict[str, Any] = {}
         self._session: Optional[AsyncSession] = None
         self._obj: Optional[Union[DeclarativeBase, dict]] = None
-        self.csrf_token: dict = {}
-        self.valid: bool
 
     def __str__(self) -> str:
         """
-        :return: str
+
+        Returns:
+            str
+
+        """
+        return f"{self.__class__.__name__}"
+
+    def __html__(self) -> str:
+        """
+        Метод возвращает строку с html кодом формы.
+
+        Returns:
+            str
         """
         form_fieldset = (
-                (
-                    f"<input type='hidden' name='{list(self.csrf_token.keys())[0]}' value='{list(self.csrf_token.values())[0]}'/>\n" if self.csrf_token else "")
-                + "<fieldset>\n"
-                + ("".join(f"{field}" for field in self.fields.values()))
+                "<fieldset>\n"
+                + (
+                    "".join(
+                        f"{widget}"
+                        for field, widget in self.fields.items()
+                        if field not in self.exclude
+                    )
+                )
                 + "</fieldset>\n"
         )
         return form_fieldset
 
-    def form_dict(self):
-        data = {}
-        if self.csrf_token:
-            data.update(self.csrf_token)
-        for field, widget in self.fields.items():
-            data.update(widget.get_data_to_dict())
-        return data
-
-    def form_json(self, indent=None, ensure_ascii=None):
-        return json.dumps(self.form_dict(), indent=indent if indent else None,
-                          ensure_ascii=ensure_ascii if ensure_ascii else False)
-
     def __getitem__(self, item) -> AbstractWidget:
+        """
+        Args:
+            item:
+                str
+        Returns:
+            Type[AbstractWidget]
+        """
         if item in self._fields:
             return self._fields[item]
         raise AttributeError(f'"{item}" is not a attribute in class {self.__class__}')
 
     def __getattr__(self, item) -> AbstractWidget:
+        """
+        Args:
+            item:
+                str
+        Returns:
+            Type[AbstractWidget]
+        """
         if item in self._fields:
             return self._fields[item]
         raise AttributeError(f'"{item}" is not a attribute in class {self.__class__}')
@@ -91,20 +124,66 @@ class BaseForm:
     def obj(self):
         return self._obj
 
+    async def _convert_value_to_required_format(self, data: dict) -> dict:
+        """
+        Конвертирует значения словаря в требуемый формат.
+
+        Args:
+            data: dict
+        Returns:
+            dict
+        """
+        converted_data = {}
+        for field, value in data.items():
+            try:
+                converted_data[field] = self.fields[field].convert(value)
+            except (ValueError, TypeError):
+                converted_data[field] = value
+        return converted_data
+
+    @staticmethod
+    async def _convert_form_data_to_dict(form_data: Union[dict, FormData, DeclarativeBase]) -> dict:
+        """
+        Получает данные формы и возвращает в формате словаря.
+
+        Args:
+            form_data:
+                Union[dict, FormData, DeclarativeBase] - данные формы.
+        Returns:
+            dict - словарь с данными
+        """
+        if isinstance(form_data, dict):
+            return form_data
+        if isinstance(form_data, FormData):
+            return dict(form_data.multi_items())
+        return form_data.__dict__
+
+    async def _cleaned_form(self, form_data) -> Dict:
+        """
+        Конвертирует входящие данные в словарь, удаляет пары ключ-значение не соответствующие полям формы.
+
+        Args:
+            form_data: dict
+
+        Returns:
+            dict
+        """
+        dict_form = await self._convert_form_data_to_dict(form_data)
+        for key, value in dict_form.copy().items():
+            if key not in self.fields.keys():
+                dict_form.pop(key)
+        dict_form = await self._convert_value_to_required_format(dict_form)
+        dict_form = await self._add_checkbox_value(dict_form)
+        return dict_form
+
 
 class ModelForm(BaseForm):
     model: Type[DeclarativeBase] = None
-    disabled = []
-    exclude = []
-    protect = []
-    hidden = []
-    readonly = []
 
     def __init__(
             self,
             session: Optional[AsyncSession] = None,
             obj: Optional[Union[DeclarativeBase, dict]] = None,
-            csrf_token: dict = None,
             prefix_form=None,
             extend_disabled: List[str] = None,
             extend_exclude: List[str] = None,
@@ -116,14 +195,13 @@ class ModelForm(BaseForm):
             replace_protect: List[str] = None,
             replace_hidden: List[str] = None,
             replace_readonly: List[str] = None,
-
     ):
         super().__init__()
         nest_asyncio.apply()
         self.session = session
-        self._obj = obj if isinstance(obj, dict) else obj.__dict__ if obj is not None else None
-        self.csrf_token = csrf_token or None
-        self.valid: bool = False
+        self._obj = (
+            obj if isinstance(obj, dict) else obj.__dict__ if obj is not None else None
+        )
         self.prefix_form = prefix_form
         self.disabled = list(self.disabled)
         self.exclude = list(self.exclude)
@@ -146,47 +224,101 @@ class ModelForm(BaseForm):
                 getattr(self, attr).extend(extend)
         asyncio.run(self._get_form_fields())
 
-    async def cleaned_form(self, form_data, to_format: bool = False) -> Dict:
+    async def _check_unique_value(self, field: str, value: Any):
         """
-        Метод приведения данных в требуемый формат и удаления пустых значений из словаря.
-        :param form_data:
-        :param to_format: bool, default True
-        :return: dict
-        """
-        if to_format is True:
-            form_data = await self._convert_to_required_format(form_data)
-        form_data = {
-            key: value
-            for key, value in form_data.items()
-            if value not in [None, "", [], (), {}]
-        }
-        form_data = await self._cleaned_checkbox_data(form_data)
-        return form_data
+            Проверяет, является ли значение уникальным для указанного поля модели.
 
-    async def is_valid(self, form_data):
+            Args:
+                field: Имя поля для проверки уникальности
+                value: Значение для проверки
+
+            Returns:
+                bool: True если значение уникально или поле не уникальное, False если значение уже существует
+
+            Raises:
+                AttributeError: Если отсутствует подключение к БД
+                SQLAlchemyError: При ошибках работы с базой данных
+            """
+        if not self._session:
+            raise AttributeError(f'No database session in class {self.__class__.__name__}')
+        mapper = class_mapper(self.model)
+        if field not in mapper.columns:
+            raise AttributeError(f"Field '{field}' does not exist in model {self.model.__name__}")
+        if not mapper.columns[field].unique:
+            return True
+        try:
+            result = await self._session.execute(
+                select(self.model).where(mapper.columns[field] == value))
+            obj = result.scalar_one_or_none()
+            return obj is None
+        except Exception as e:
+            await self._session.rollback()
+            raise e
+        finally:
+            await self._session.aclose()
+
+    async def _add_checkbox_value(self, formated_data):
+        """
+        Добавляет в словарь значение False для полей типа checkbox при их отсутствии.
+
+        Args:
+            formated_data: dict
+
+        Returns:
+            dict
+        """
+        mapper = class_mapper(self.model)
+        for column in mapper.columns:
+            if isinstance(column.type, Boolean):
+                if column.name not in formated_data:
+                    formated_data[column.name] = False
+        return formated_data
+
+    async def is_valid(self, form_data) -> bool:
+        """
+        Валидирует данные формы и заполняет self._obj корректными значениями.
+
+        Args:
+            form_data: Данные формы (обычно dict или FormData)
+
+        Returns:
+            bool: True если все данные валидны, False если есть ошибки
+
+        Side Effects:
+            - Заполняет self._obj валидными значениями
+            - Заполняет self.errors сообщениями об ошибках
+        """
         self._obj = {}
-        cleaned_data = await self.cleaned_form(dict(form_data.multi_items()), to_format=True)
-        for key, value in cleaned_data.copy().items():
-            if key not in self.fields.keys():
-                cleaned_data.pop(key)
+        self.errors = {}
+        cleaned_data = await self._cleaned_form(form_data)
+        for field_name, field_value in cleaned_data.items():
+            if field_name not in self.fields:
                 continue
-            self._obj[key] = cleaned_data[key]
-            err = self.fields[key].default_validator(cleaned_data[key])
-            if err is not True:
-                self.errors[key] = err
-        if self.errors:
-            await self._get_form_fields()
-            return False
-
-        return True
+            is_valid = self.fields[field_name].default_validator(field_value)
+            if not is_valid:
+                self.errors[field_name] = ', '.join(map(str, self.fields[field_name].list_error))
+                continue
+            if self.model:
+                try:
+                    if not await self._check_unique_value(field_name, field_value):
+                        self.fields[field_name].list_error.append("Value must be unique")
+                        self.errors[field_name] = ', '.join(map(str, self.fields[field_name].list_error))
+                        continue
+                except Exception as e:
+                    self.fields[field_name].list_error.append(f"Unique check failed: {str(e)}")
+                    self.errors[field_name] = ', '.join(map(str, self.fields[field_name].list_error))
+                    continue
+            self._obj[field_name] = field_value
+        return len(self.errors) == 0
 
     async def save_form(
             self,
     ) -> DeclarativeBase:
         """
-        Метод записи полученных данных из формы в базу данных.
-        :param form_data:
-        :return:
+        Метод сохранения данных формы.
+
+        Returns:
+            DeclarativeBase - объект из базы данных.
         """
         if self._session is None:
             raise ValueError(
@@ -201,6 +333,20 @@ class ModelForm(BaseForm):
         return await self._save_object_form(self.obj)
 
     async def _save_object_form(self, data):
+        """
+        Создает новый объект модели в базе данных и возвращает его.
+
+        Args:
+            data (dict): Словарь с данными для создания объекта.
+
+        Returns:
+            DeclarativeBase: Созданный объект модели. Конкретный тип зависит от self.model.
+
+        Raises:
+            ValueError: Если переданные данные невалидны для модели
+            SQLAlchemyError: При ошибках работы с базой данных
+            Exception: Любые другие непредвиденные ошибки
+        """
         try:
             instance = self.model(**data)
             self._session.add(instance)
@@ -212,7 +358,16 @@ class ModelForm(BaseForm):
             await self._session.rollback()  # Откатываем изменения при других ошибках
             raise e
 
-    async def _get_sql_request(self, data) -> List:
+    async def _binary_expression_for_pk(self, data) -> List:
+        """
+        Получения бинарной экспрессии для sql запроса в базу данных.
+
+        Args:
+            data: dict
+
+        Returns:
+            list
+        """
         result = []
         for col in self.model.__mapper__.columns:
             if col.name == self.model.__table__.primary_key.columns.keys()[0]:
@@ -222,7 +377,17 @@ class ModelForm(BaseForm):
         return result
 
     async def _update_object_form(self, data):
-        sql_request = await self._get_sql_request(data)
+        """
+        Обновляет объект модели в базе данных и возвращает его.
+
+        Args:
+            data (dict): Словарь с данными для создания объекта.
+
+        Returns:
+            DeclarativeBase: Созданный объект модели. Конкретный тип зависит от self.model.
+
+        """
+        sql_request = await self._binary_expression_for_pk(data)
         result = await self._session.execute(select(self.model).where(*sql_request))
         obj = result.scalar_one_or_none()
         if obj:
@@ -237,40 +402,44 @@ class ModelForm(BaseForm):
             data.pop(self.model.__table__.primary_key.columns.keys()[0])
             return await self._save_object_form(data)
 
-    async def _cleaned_checkbox_data(self, formated_data):
-        mapper = class_mapper(self.model)
-        for column in mapper.columns:
-            if isinstance(column.type, Boolean):
-                if column.name not in formated_data:
-                    formated_data[column.name] = False
-        return formated_data
-
-    async def _convert_to_required_format(self, data: dict) -> dict:
-        converted_data = {}
-        for field, value in data.items():
-            try:
-                converted_value = self.fields[field].convert(value)
-                converted_data[field] = converted_value
-            except Exception:
-                converted_data[field] = value
-        return converted_data
-
     def update_field(
             self,
-            field: str,
-            widget: Type[AbstractWidget] = None,
-            label: str = None,
-            extra_attrs: dict = None,
-            options_visible_value: str = None,
-            validator=None
+            model_field: str,
+            widget: Type[AbstractWidget] | None = None,
+            label: str | None = None,
+            extra_attrs: ExtraAttrsDict | None = None,
+            options_visible_value: str | None = None,
+            validator: (
+                    Callable[
+                        [
+                            Union[
+                                str,
+                                int,
+                                float,
+                                datetime.time,
+                                datetime.date,
+                                datetime.datetime,
+                                UploadFile,
+                            ]
+                        ],
+                        bool,
+                    ]
+                    | None
+            ) = None,
     ) -> None:
         """
-        Метод, позволяющий изменить стандартный виджет поля.
-        :param field: str - Обязательный атрибут. Имя поля.
-        :param widget: Type[BaseFormInputField] - Необязательный атрибут. Класс виджета для замены стандартного.
-        :param label: str - Необязательный атрибут. Строка, которая заменить имя поля в <label>.
-        :param extra_attrs: dict - Необязательный атрибут. Параметры, которые будут добавлены в <input>.
-        :return: None
+        Обновляет поле формы используя указанные аргументы.
+
+        Args:
+            model_field: Имя поля из модели для обновления
+            widget: Виджет для поля
+            label: Имя поля в форме
+            extra_attrs: Словарь дополнительных атрибутов поля.
+            options_visible_value: Видимое значения для поля select.
+            validator: функция для валидации значений поля.
+        Returns:
+            None
+
         """
         if extra_attrs:
             for key in extra_attrs.keys():
@@ -278,36 +447,54 @@ class ModelForm(BaseForm):
                     extra_attrs.pop(key)
         mapper = class_mapper(self.model)
         for column in mapper.columns:
-            if field != column.name:
+            if model_field != column.name:
                 continue
             if widget is None:
                 widget = asyncio.run(self._get_widget(column))
-            attrs = asyncio.run(self._get_widget_attrs(column, label, extra_attrs, options_visible_value))
-            self.fields[field] = widget(**attrs, name=column.name, validator=validator)
+            attrs = asyncio.run(
+                self._get_widget_attrs(
+                    column, label, extra_attrs, options_visible_value
+                )
+            )
+            self.fields[model_field] = widget(**attrs, name=column.name, validator=validator)
 
     async def _get_form_fields(self) -> None:
         """
         Метод, собирающий в словарь fields готовые объекты полей формы используя поля модели с учетом исключений.
-        :return: None
+
+        Returns:
+            None
         """
+        self.fields = {}
         mapper = class_mapper(self.model)
         for column in mapper.columns:
-            if column.name in self.exclude:
-                continue
             widget = await self._get_widget(column)
             attrs = await self._get_widget_attrs(column)
             self.fields[column.name] = widget(**attrs, name=column.name)
 
     async def _get_widget_attrs(
-            self, column, label: str = None, extra_attrs: dict = None, options_visible_value: str = None
+            self,
+            column,
+            label: str = None,
+            extra_attrs: dict = None,
+            options_visible_value: str = None,
     ) -> dict:
         """
-        Метод генерирует атрибуты для виджетов полей формы на основе полей модели.
-        :param column: ColumnElement - обязательный атрибут, поле модели
-        :return: dict - словарь атрибутов для виджета.
+        Генерирует атрибуты для виджетов полей формы на основе полей модели.
+
+        Args:
+            column:
+            label:
+            extra_attrs:
+            options_visible_value:
+
+        Returns:
+            dict: словарь атрибутов
         """
-        extensions = await self._get_filefield_properties(column)
-        options = await self._get_options_for_field_select(column, options_visible_value)
+        extensions = await self._get_filefield_extensions(column)
+        options = await self._get_options_for_field_select(
+            column, options_visible_value
+        )
         attrs_dict = {
             "label": label if label else column.name,
             "readonly": True if column.name in self.readonly else False,
@@ -319,15 +506,19 @@ class ModelForm(BaseForm):
             "extra_attrs": extra_attrs if extra_attrs else {},
             "init_data": await self._get_init_data(column),
             "prefix": self.__dict__.get("prefix_form", None),
-            "error": self.errors.get(column.name) if self.errors.get(column.name) else ""
         }
         return attrs_dict
 
     async def _get_widget(self, column) -> Type[AbstractWidget]:
         """
-        Метод возвращает виджет для поля формы в зависимости от поля модели.
-        :param column: ColumnElement - обязательный атрибут, поле модели
-        :return: Type[BaseFormInputField]
+        Получает виджет для поля формы в зависимости от типа поля модели.
+
+        Args:
+            column:
+                колонка модели
+        Returns:
+            Type[AbstractWidget]:
+                виджет в зависимости от типа поля модели
         """
         widget_dict = {
             PasswordField: PasswordWidget,
@@ -361,9 +552,16 @@ class ModelForm(BaseForm):
 
     async def _get_init_data(self, column) -> dict:
         """
-        Метод генерирует начальные данные для поля.
-        :param column: ColumnElement - поле модели, обязательный атрибут.
-        :return: dict - Возвращает словарь с начальными данными для поля формы.
+        Получает начальные значения для поля.
+
+        Args:
+            column:
+                колонка модели.
+
+        Returns:
+            dict:
+                словарь с данными.
+
         """
         result = {}
         if self._obj:
@@ -382,8 +580,14 @@ class ModelForm(BaseForm):
     async def _get_select_options_data(self, model) -> Sequence[DeclarativeBase]:
         """
         Запрашивает из базы данных значения для ForeignKeys.
-        :param model: DeclarativeBase
-        :return: Sequence[DeclarativeBase]
+
+        Args:
+            model:
+                модель базы данных для извлечения.
+
+        Returns:
+            list:
+                список объектов.
         """
         if self._session:
             result = await self._session.scalars(select(model).options())
@@ -391,11 +595,16 @@ class ModelForm(BaseForm):
             return result.all()
         return []
 
-    async def _get_options_for_field_select(self, column, options_visible_value: str = None) -> dict:
+    async def _get_options_for_field_select(self, column, options_visible_value: str | None = None) -> dict:
         """
         Создает словарь опций для виджета select из модели.
-        :param column: ColumnElement - поле модели, обязательный атрибут.
-        :return: dict - словарь с опциями
+
+        Args:
+            column: колонка модели для которой создается список опций.
+            options_visible_value: отображаемое в списке опций значение.
+
+        Returns:
+            dict: словарь значений
         """
         options_for_field = {}
         if self._session is None:
@@ -412,25 +621,29 @@ class ModelForm(BaseForm):
             )
             for obj in select_objects:
                 pk_field = obj.__class__.__table__.primary_key.columns.keys()[0]
-                options_for_field[str(obj.__dict__.get(pk_field))] = obj.__dict__.get(options_visible_value,
-                                                                                      obj) if options_visible_value else obj
+                options_for_field[str(obj.__dict__.get(pk_field))] = (
+                    obj.__dict__.get(options_visible_value, obj)
+                    if options_visible_value
+                    else obj
+                )
         return options_for_field
 
     async def selected_to_download(
             self, column, value, quantity: int = None
     ) -> Union[Sequence[DeclarativeBase], List]:
         """
-        *** Перспективная функция. В разработке ***
-        Загружает выборку объектов из базы данных.
-        :param column: ColumnElement
-        :param value: Any
-        :param quantity: Optional[int]
-        :return: list
+        Перспективная функция. В разработке.
+
+        Args:
+            column:
+            value:
+            quantity:
+
+        Returns:
+
         """
         if value:
-            filter_from_where = await self._get_sql_for_selected_to_download(
-                column, value
-            )
+            filter_from_where = column == value
             result = await self._session.scalars(
                 select(self.model).where(*filter_from_where)
             )
@@ -443,17 +656,15 @@ class ModelForm(BaseForm):
         return result.all()
 
     @staticmethod
-    async def _get_sql_for_selected_to_download(column, value):
-        result = []
-        request = column == value
-        result.append(request)
-        return result
-
-    async def _get_option_for_enum_class(self, column):
+    async def _get_option_for_enum_class(column) -> dict:
         """
         Создает словарь опций для виджета select из класса Enum.
-        :param column: ColumnElement - поле модели, обязательный атрибут.
-        :return: dict - словарь с опциями
+
+        Args:
+            column:
+
+        Returns:
+            dict:
         """
         options_for_field = {}
         try:
@@ -466,7 +677,16 @@ class ModelForm(BaseForm):
             return options_for_field
 
     @staticmethod
-    async def _get_filefield_properties(column):
+    async def _get_filefield_extensions(column):
+        """
+        Получает поддерживаемые расширения файлов для полей FileField.
+
+        Args:
+            column:
+
+        Returns:
+            list:
+        """
         if isinstance(column.type, FileField):
             return column.type.allowed_extensions
 
@@ -478,14 +698,11 @@ class Form(BaseForm):
             session: Optional[AsyncSession] = None,
             obj: Optional[Union[DeclarativeBase, dict]] = None,
             prefix_form: str = None,
-            csrf_token: dict = None
     ):
         super().__init__()
         self.session = session
         self._obj = obj or None
         self.prefix_form = prefix_form
-        self.csrf_token = csrf_token
-        # self._fields: dict = {}
         for attr_name in vars(self.__class__):
             if attr_name.startswith("__"):
                 continue
@@ -495,18 +712,25 @@ class Form(BaseForm):
             if isinstance(attr, BaseWidget):
                 self.fields[attr_name] = copy.deepcopy(attr)
                 self.fields[attr_name].update_attrs(
-                    obj=self._obj if self._obj else {},
-                    prefix=prefix_form if prefix_form else None,
-                )
+                    obj=(
+                        obj if isinstance(obj, dict) else obj.__dict__ if obj is not None else None
+                    ),
+                    prefix=prefix_form if prefix_form else None)
 
     def get_options(
-            self, model: Union[Type[DeclarativeBase], Type[enum.Enum]], visible_value: str = None
+            self,
+            model: Union[Type[DeclarativeBase], Type[enum.Enum]],
+            visible_value: str = None,
     ) -> Union[dict[str, str], dict[int, str], dict[int, int], dict[str, int], dict]:
         """
-        Метод добавления опций в поле select формы
-        :param model: Type[DeclarativeBase] or Type[enum.Enum] - обязательный атрибут
-        :param visible_value: str - имя поля для отображения в выпадающем списке
-        :return: dict - словарь с данными
+        Метод добавления опций в поле select формы.
+
+        Args:
+            model:
+            visible_value:
+
+        Returns:
+
         """
         result = {}
         if isinstance(model, DeclarativeAttributeIntercept):
@@ -514,7 +738,7 @@ class Form(BaseForm):
                 model_pk = model.__table__.primary_key.columns.keys()[0]
                 objects = asyncio.run(self.session.scalars(select(model)))
                 for obj in objects:
-                    result[obj.__dict__.get(model_pk)] = obj.__dict__.get(visible_value, obj) if visible_value else obj
+                    result[str(obj.__dict__.get(model_pk))] = obj.__dict__.get(visible_value, obj if visible_value else obj)
                 asyncio.run(self.session.aclose())
                 return result
             else:
@@ -523,183 +747,42 @@ class Form(BaseForm):
             objects = list(model)
             for obj in objects:
                 try:
-                    result[obj.name] = obj.value
+                    result[str(obj.name)] = obj.value
                 except Exception:
-                    result[obj.name] = obj
+                    result[str(obj.name)] = obj
             return result
         else:
             return result
 
-    def cleaned_form(self, form_data) -> dict:
-        result = {}
-        for key, value in dict({**form_data}):
-            if key in self.fields.keys():
-                result[key] = value
-        return result
-
-
-class FormSet:
-    _parent_form = None
-    _parent_obj = None
-    _child_form = None
-    _session = None
-    _child_load = None
-    form = None
-
-    def __init__(
-            self,
-            parent_form,
-            child_form,
-            session=None,
-            parent_obj=None,
-            quantity_child_obj: Union[int, Literal["__all__"]] = None,
-            quantity_child_form=None,
-            child_load: bool = False,
-    ):
-        self.child_formset = []
-        self._session = session
-        self._parent_form = parent_form
-        self._parent_obj = parent_obj or None
-        self._child_form = child_form
-        self._quantity_child_obj = quantity_child_obj or 1
-        self._quantity_child_form = quantity_child_form or 1
-        self._child_load = (
-            child_load if getattr(self._child_form, "model", None) else False
-        )
-        setattr(self, "form", parent_form(session=session, obj=parent_obj))
-        asyncio.run(self._get_child_formset())
-
-    def __str__(self):
-        return asyncio.run(self.render_all())
-
-    def __getitem__(self, item):
-        if item == "formset":
-            return self.child_formset
-        if item in self.__dict__:
-            return self.__dict__[item]
-
-    async def render_all(self) -> str:
-        parent = await self.render_parent_form()
-        child = await self.render_child_formset()
-        return f"{parent}<hr>\n{child}"
-
-    async def render_parent_form(self):
-        return self.form
-
-    async def render_child_formset(self):
-        html = ""
-        for form in self.child_formset:
-            html += str(form)
-            html += "<hr>"
-        return html
-
-    """ Обработка формы. Закончить!"""
-
-    async def cleaned_form(self, form_data) -> dict:
+    async def _add_checkbox_value(self, formated_data):
         """
-        Обработка данных формы
-        :param form_data: starlette.datastructures.FormData
-            данные из формсета
-        :return: dict
-            result = {"parent": {}, "children": []}
+        Добавляет в словарь значение False для полей типа checkbox при их отсутствии.
+
+        Args:
+            formated_data: dict
+
+        Returns:
+            dict
         """
-        form_class_name = self._child_form.__name__.lower()
-        result = {"parent": {}, "children": []}
-        for key in list(self.form.fields.keys()):
-            if key in dict(form_data):
-                result["parent"][key] = dict(form_data)[key]
-        for i in range(1, self._quantity_child_form + 1):
-            child_data = {}
-            prefix = f"{form_class_name}-{i}_"
-            for key, value in form_data.items():
-                if key.startswith(prefix):
-                    child_data[key.replace(prefix, "")] = value
-            result["children"].append(child_data)
-        return result
+        for field, widget in self.fields.items():
+            if widget.type is bool:
+                if field not in formated_data:
+                    formated_data[field] = False
+        return formated_data
 
-    async def save_form(self):
-        pass
-
-    async def save_formset(self):
-        pass
-
-    async def _get_child_formset(self) -> None:
-        """
-        Генерирует список self.child_formset в зависимости от атрибутов класса.
-        :return: None
-        """
-        if self._child_load is True:
-            child_objects = await self._get_objects_for_child_form()
-            for i, obj in enumerate(child_objects, 1):
-                child = self._child_form(
-                    session=self._session,
-                    obj=obj,
-                    prefix_form=f"{self._child_form.__name__.lower()}-{i}",
-                )
-                self.child_formset.append(child)
-        else:
-            for i in range(1, self._quantity_child_form + 1):
-                self.child_formset.append(
-                    self._child_form(
-                        session=self._session,
-                        prefix_form=f"{self._child_form.__name__.lower()}-{i}",
-                    )
-                )
-
-    async def _get_objects_for_child_form(self):
-        return await self._filter_child_selected_to_download(
-            self._get_fk_field(),
-            self._parent_obj.__dict__.get(self._get_model_field_for_fk()),
-        )
-
-    async def _filter_child_selected_to_download(self, column, value) -> List:
-        """
-        Возвращает список объектов для дочерних форм формсета.
-        :param column: ColumnElement - поле, по которому будет выборка объектов из базы данных.
-        :param value: int - значение поля для выборки
-        :return: list
-        """
-        sql_request = await self._get_sql_request_for_filter(column, value)
-        result = await self._session.scalars(
-            select(self._child_form.model).where(*sql_request)
-        )
-        await self._session.close()
-        if self._quantity_child_obj == "__all__":
-            return result.all()
-        elif self._quantity_child_obj > 0:
-            return result.all()[: self._quantity_child_obj]
-        elif self._quantity_child_obj < 0:
-            return list(reversed(result.all()))[self._quantity_child_obj:]
-
-    def _get_fk_field(self):
-        """
-        Возвращает колонку с foreign_key к модели из родительской формы
-        :return:
-        """
-        mapper = inspect(self._child_form.model)
-        for column in mapper.columns:
-            if column.foreign_keys:
-                for fk in column.foreign_keys:
-                    if fk.column.table.name == self._parent_form.model.__table__.name:
-                        return column
-
-    def _get_model_field_for_fk(self):
-        """
-        Возвращает имя поля из модели родительской формы к которому привязан foreign_key
-        :return:
-        """
-        mapper = inspect(self._child_form.model)
-        for foreign_key in mapper.local_table.foreign_keys:
-            # Проверяем, ссылается ли внешний ключ на таблицу model1
-            if foreign_key.column.table.name == self._parent_form.model.__table__.name:
-                return foreign_key.column.name  # Возвращаем имя поля с внешним ключом
-
-    @staticmethod
-    async def _get_sql_request_for_filter(column, value):
-        result = []
-        request = column == value
-        result.append(request)
-        return result
+    async def is_valid(self, form_data):
+        self._obj = {}
+        self.errors = {}
+        cleaned_data = await self._cleaned_form(form_data)
+        for field_name, field_value in cleaned_data.items():
+            if field_name not in self.fields:
+                continue
+            is_valid = self.fields[field_name].default_validator(field_value)
+            if not is_valid:
+                self.errors[field_name] = ', '.join(map(str, self.fields[field_name].list_error))
+                continue
+            self._obj[field_name] = field_value
+        return len(self.errors) == 0
 
 
-__all__ = ('ModelForm', 'Form', 'FormSet')
+__all__ = ('ModelForm', 'Form')
