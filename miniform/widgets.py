@@ -493,7 +493,7 @@ class TextAreaWidget(BaseWidget):
         html_icon = Markup(" <em>*</em>") if self.required else Markup("")
         attrs = self.get_widget_attrs()
         value = self.get_widget_prefix()
-        init_value = str(self.init_data.get(self.name, ""))
+        init_value = escape(str(self.init_data.get(self.name, "")))
         extra_attrs = self.get_extra_attrs()
         return (
             Markup(
