@@ -1,5 +1,6 @@
 import os
 import re
+from urllib.parse import unquote
 
 from sqlalchemy import Dialect
 from sqlalchemy.types import TypeDecorator, String
@@ -9,6 +10,9 @@ from miniform.utils import hashed_func
 
 
 class FileField(TypeDecorator):
+    """
+    Класс поля модели для файлов
+    """
     impl = String
     model_type = "FileField"
 
@@ -22,13 +26,24 @@ class FileField(TypeDecorator):
             *args,
             **kwargs,
     ) -> None:
+        """
+        Конструктор класса.
+
+        Args:
+            upload_to : место для загрузки файлов на диск.
+            max_size : максимальный размер файла в байтах.
+            allowed_extensions: поддерживаемые расширения для файлов.
+            file_is_empty: может ли файл быть пустым.
+            name_translate: требуется ли перевод имен файлов с русского языка.
+            *args:
+            **kwargs:
+        """
         super().__init__(*args, **kwargs)
         self.upload_to = upload_to
         self.max_size = abs(max_size) * 1024
         self.file_is_empty = file_is_empty
         self._existing_value = None
         self.name_translate = name_translate
-
         self.allowed_extensions = []
         if allowed_extensions:
             for ext in allowed_extensions:
@@ -42,22 +57,37 @@ class FileField(TypeDecorator):
 
     def set_existing_value(self, value: str) -> None:
         """
-        Метод для установки существующего значения
-        :param value: str
-        :return: None
+        Метод для установки существующего значения.
+
+        Args:
+            value: str
+
+        Returns:
+            None
         """
         self._existing_value = value
 
     def create_directory(self) -> None:
         """
         Метод создания директории для загрузки файлов.
-        :return: None
+
+        Returns:
+            None
         """
         if not os.path.exists(self.upload_to):
             os.makedirs(self.upload_to)
 
     @staticmethod
-    def russian_to_english(text):
+    def russian_to_english(text) -> str:
+        """
+        Метод замены русских символов в имени файла.
+
+        Args:
+            text: str
+
+        Returns:
+            str
+        """
         translit_dict = {
             'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'yo',
             'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
@@ -126,8 +156,30 @@ class FileField(TypeDecorator):
             raise ValueError(f"File type '{ext_part}' is not allowed")
         return f"{name_part}{ext_part}"
 
+    @staticmethod
+    def clean_filename(filename: str) -> str:
+        """
+        Очищает имя файла от запрещенных символов.
+
+        Args:
+            filename: str
+
+        Returns:
+            str
+        """
+        return re.sub(r"[^\w\-.()\"'?@!*,+_%]", "", filename.replace(" ", "_"))
+
     def get_unique_filepath(self, filename: str) -> str:
-        clean_name = re.sub(r"[^\w\-.]", "", filename.replace(" ", "_"))
+        """
+        Получает уникальный путь для файлов.
+
+        Args:
+            filename: str
+
+        Returns:
+            str
+        """
+        clean_name = self.clean_filename(filename)
         filepath = os.path.join(self.upload_to, clean_name)
         if not clean_name.strip("._-"):
             clean_name = "file" + (f".{extension}" if (extension := os.path.splitext(filename)[1]) else "")
@@ -154,15 +206,28 @@ class ImageField(FileField):
             max_size: int,
             allowed_extensions: list = None,
             file_is_empty: bool = False,
+            name_translate: bool = False,
             *args,
             **kwargs,
     ) -> None:
+        """
+        Конструктор класса.
+
+        Args:
+            upload_to: место хранения файлов на диске.
+            max_size: максимальный размер файла в байтах.
+            allowed_extensions: поддерживаемые расширения.
+            file_is_empty: может ли файл быть пустым.
+            name_translate: преобразовывать имена файлов.
+            *args:
+            **kwargs:
+        """
         super().__init__(*args, **kwargs)
         self.upload_to = upload_to
         self.max_size = abs(max_size) * 1024
         self.file_is_empty = file_is_empty
         self._existing_value = None
-
+        self.name_translate = name_translate
         self.allowed_extensions = []
         if allowed_extensions:
             for ext in allowed_extensions:
@@ -178,9 +243,22 @@ class ImageField(FileField):
 
 
 class PasswordField(TypeDecorator):
+    """
+    Класс поля для хранения паролей.
+    """
     impl = String
 
-    def __init__(self, max_length: int = None, min_length: int = None, func=None, *args, **kwargs):
+    def __init__(self, max_length: int = None, min_length: int = None, func=None, *args, **kwargs) -> None:
+        """
+        Конструктор класса для хранения паролей.
+
+        Args:
+            max_length: максимальная длинна поля.
+            min_length: минимальная длинна поля.
+            func: функция для шифрования пароля.
+            *args:
+            **kwargs:
+        """
         super().__init__(*args, **kwargs)
         self.func = hashed_func if func is None else func
         self.max_length = abs(max_length) if max_length else 256
