@@ -16,14 +16,14 @@ class TextWidgetExtraAttrs(TypedDict, total=False):
         - title: str - Текст подсказки поля.
         - placeholder: str - Текст-пример для поля.
         - autocomplete: str - Автодополнение поля.
-        - max_length: int - Максимальная длинна значения.
-        - min_length: int - Минимальная длинна значения.
+        - maxlength: int - Максимальная длинна значения.
+        - minlength: int - Минимальная длинна значения.
     """
     title: str
     placeholder: str
     autocomplete: str
-    max_length: int
-    min_length: int
+    maxlength: int
+    minlength: int
 
 
 class TextAreaWidgetExtraAttrs(TypedDict, total=False):
@@ -32,14 +32,14 @@ class TextAreaWidgetExtraAttrs(TypedDict, total=False):
         - title: str - Текст подсказки поля.
         - placeholder: str - Текст-пример для поля.
         - autocomplete: str - Автодополнение поля.
-        - max_length: int - Максимальная длинна значения.
-        - min_length: int - Минимальная длинна значения.
+        - maxlength: int - Максимальная длинна значения.
+        - minlength: int - Минимальная длинна значения.
     """
     title: str
     placeholder: str
     autocomplete: str
-    max_length: int
-    min_length: int
+    maxlength: int
+    minlength: int
 
 
 class EmailWidgetExtraAttrs(TypedDict, total=False):
@@ -59,15 +59,15 @@ class IntegerWidgetExtraAttrs(TypedDict, total=False):
     Словарь дополнительных атрибутов для IntegerWidget :
         - title: str - Текст подсказки поля.
         - placeholder: str - Текст-пример для поля.
-        - max_length: int - Максимальная длинна значения.
-        - min_length: int - Минимальная длинна значения.
+        - maxlength: int - Максимальная длинна значения.
+        - minlength: int - Минимальная длинна значения.
         - max: int - Максимальное значение поля.
         - min: int - Минимальное значение поля.
     """
     title: str
     placeholder: str
-    max_length: int
-    min_length: int
+    maxlength: int
+    minlength: int
     max: int
     min: int
 
@@ -77,16 +77,16 @@ class FloatWidgetExtraAttrs(TypedDict, total=False):
     Словарь дополнительных атрибутов для FloatWidget :
         - title: str - Текст подсказки поля.
         - placeholder: str - Текст-пример для поля.
-        - max_length: float - Максимальная длинна значения.
-        - min_length: float - Минимальная длинна значения.
+        - maxlength: int - Максимальная длинна значения.
+        - minlength: int - Минимальная длинна значения.
         - max: float - Максимальное значение поля.
         - min: float - Минимальное значение поля.
         - step: float - Шаг значения поля.
     """
     title: str
     placeholder: str
-    max_length: float
-    min_length: float
+    maxlength: int
+    minlength: int
     max: float
     min: float
     step: float
@@ -96,15 +96,15 @@ class RangeWidgetExtraAttrs(TypedDict, total=False):
     """
     Словарь дополнительных атрибутов для RangeWidget :
         - title: str - Текст подсказки поля.
-        - max_length: float - Максимальная длинна значения.
-        - min_length: float - Минимальная длинна значения.
+        - maxlength: int - Максимальная длинна значения.
+        - minlength: int - Минимальная длинна значения.
         - max: float - Максимальное значение поля.
         - min: float - Минимальное значение поля.
         - step: float - Шаг значения поля
     """
     title: str
-    max_length: float
-    min_length: float
+    maxlength: int
+    minlength: int
     min: float
     max: float
     step: float
@@ -116,14 +116,14 @@ class PasswordWidgetExtraAttrs(TypedDict, total=False):
         - title: str - Текст подсказки поля.
         - placeholder: str - Текст-пример для поля.
         - autocomplete: str - Автодополнение поля.
-        - max_length: int - Максимальная длинна значения.
-        - min_length: int - Минимальная длинна значения.
+        - maxlength: int - Максимальная длинна значения.
+        - minlength: int - Минимальная длинна значения.
     """
     title: str
     placeholder: str
     autocomplete: str
-    max_length: int
-    min_length: int
+    maxlength: int
+    minlength: int
     autocomplete: str
 
 
@@ -472,21 +472,21 @@ class BaseWidget(AbstractWidget):
         self.init_data[self.name] = escape(value)
         setattr(self, "field", self.get_input())
         self.list_error = []
-        min_length = int(self.extra_attrs.get("min_length", 0))
-        max_length = int(self.extra_attrs.get("max_length", 256))
+        minlength = int(self.extra_attrs.get("minlength", 0))
+        maxlength = int(self.extra_attrs.get("maxlength", 256))
         if value in (None, ""):
             return True
         if value in (None, "") and self.required:
             self.list_error.append(f" Field cannot be empty")
         if not isinstance(value, self.value_type):
             value = self.convert(value)
-        if min_length is not None and min_length > len(value):
+        if minlength is not None and minlength > len(value):
             self.list_error.append(
-                f" The value must be longer than {min_length} and shorter than {max_length}."
+                f" The value must be longer than {minlength} and shorter than {maxlength}."
             )
-        if max_length is not None and max_length < len(value):
+        if maxlength is not None and maxlength < len(value):
             self.list_error.append(
-                f" The value must be longer than {min_length} and shorter than {max_length}."
+                f" The value must be longer than {minlength} and shorter than {maxlength}."
             )
         if not re.fullmatch(self.pattern, escape(value)):
             special_chars = re.sub(
@@ -563,25 +563,25 @@ class IntegerWidget(BaseWidget):
         self.init_data[self.name] = value
         setattr(self, "field", self.get_input())
         self.list_error = []
-        min_length = self.convert(self.extra_attrs.get("min_length", 0))
-        max_length = self.convert(self.extra_attrs.get("max_length", 256))
-        min_value = self.convert(self.extra_attrs.get("min", None))
-        max_value = self.convert(self.extra_attrs.get("max", None))
+        minlength = self.convert(self.extra_attrs.get("minlength", 0))
+        maxlength = self.convert(self.extra_attrs.get("maxlength", 256))
+        min = self.convert(self.extra_attrs.get("min", None))
+        max = self.convert(self.extra_attrs.get("max", None))
         if (value is None or value == "") and self.required:
             self.list_error.append(f" Field cannot be empty.")
         if (value is None or value == "") and not self.required:
             return True
-        if (min_value is not None and value < min_value) or (
-            max_value is not None and value > max_value
+        if (min is not None and value < min) or (
+                max is not None and value > max
         ):
             self.list_error.append(
-                f" Field must be greater than {min_value} and less than {max_value}"
+                f" Field must be greater than {min} and less than {max}"
             )
-        if (min_length is not None and len(str(value)) < min_length) or (
-            max_length is not None and len(str(value)) > max_length
+        if (minlength is not None and len(str(value)) < minlength) or (
+                maxlength is not None and len(str(value)) > maxlength
         ):
             self.list_error.append(
-                f" The number of characters must be greater than {min_length} and less than {max_length}"
+                f" The number of characters must be greater than {minlength} and less than {maxlength}"
             )
         if not re.fullmatch(self.pattern, str(value)):
             self.list_error.append(" Value does not meet requirements.")
@@ -597,23 +597,23 @@ class FloatWidget(BaseWidget):
         self.init_data[self.name] = value
         setattr(self, "field", self.get_input())
         self.list_error = []
-        min_value = float(self.extra_attrs.get("min")) if "min" in self.extra_attrs else None
-        max_value = float(self.extra_attrs.get("max")) if "max" in self.extra_attrs else None
-        min_length = int(self.extra_attrs.get("min_length", 0))
-        max_length = int(self.extra_attrs.get("max_length", 256))
+        min = float(self.extra_attrs.get("min")) if "min" in self.extra_attrs else None
+        max = float(self.extra_attrs.get("max")) if "max" in self.extra_attrs else None
+        minlength = int(self.extra_attrs.get("minlength", 0))
+        maxlength = int(self.extra_attrs.get("maxlength", 256))
         if value in (None, ""):
             if self.required:
                 self.list_error.append(f" Field cannot be empty.")
             return not self.required
-        if (min_value is not None and value < min_value) or (
-                max_value is not None and value > max_value
+        if (min is not None and value < min) or (
+                max is not None and value > max
         ):
             self.list_error.append(
-                f" Length must be between {min_value} and {max_value}"
+                f" Length must be between {min} and {max}"
             )
-        if len(str(value)) < min_length or len(str(value)) > max_length:
+        if len(str(value)) < minlength or len(str(value)) > maxlength:
             self.list_error.append(
-                f"Length must be between {min_length} and {max_length} chars"
+                f"Length must be between {minlength} and {maxlength} chars"
             )
         if not re.fullmatch(self.pattern, str(value)):
             self.list_error.append("Invalid format")
@@ -717,25 +717,26 @@ class PasswordWidget(BaseWidget):
 
     def default_validator(self, value: Union[str, None]) -> bool:
         self.list_error = []
-        min_length = (
-            abs(int(self.extra_attrs.get("min_length", 4)))  # не забыть исправить на 0!!!
+        minlength = (
+            abs(int(self.extra_attrs.get("minlength", 0)))
             if not self.required
-            else abs(int(self.extra_attrs.get("min_length", 4)))
+            else abs(int(self.extra_attrs.get("minlength", 4)))
         )
-        max_length = abs(int(self.extra_attrs.get("max_length", 128)))
-        if value in (None, "") and not self.required and min_length == 0:
+        maxlength = abs(int(self.extra_attrs.get("maxlength", 128)))
+        if value in (None, "") and not self.required and minlength == 0:
             return True
-        if value in (None, "") and self.required:
-            self.list_error.append(f" Field cannot be empty")
+        if (value in (None, "") and self.required) or minlength != 0:
+            self.list_error.append(f" Value cannot be empty")
         if not isinstance(value, self.value_type):
             value = self.convert(value)
-        if min_length is not None and min_length > len(value):
+        print(minlength, value, "test")
+        if minlength is not None and minlength > len(value) if value is not None else 0:
             self.list_error.append(
-                f" Content should be shorter than {min_length} and longer than {max_length}."
+                f" Content should be shorter than {minlength} and longer than {maxlength}."
             )
-        if max_length is not None and max_length < len(value):
+        if maxlength is not None and maxlength < len(value) if value is not None else 0:
             self.list_error.append(
-                f" Content should be shorter than {min_length} and longer than {max_length}."
+                f" Content should be shorter than {minlength} and longer than {maxlength}."
             )
         if not re.fullmatch(self.pattern, escape(value)):
             special_chars = re.sub(
@@ -1330,6 +1331,3 @@ class ImageWidget(FileWidget):
     def show(self):
         file_path = escape(self.init_data.get(self.name))
         return Markup(f'<img src="{file_path}" alt="Image"')
-
-
-__all__ = ('ExtraAttrsDict', 'AbstractWidget', 'BaseWidget', 'TextWidget', 'TextAreaWidget', 'EmailWidget', 'IntegerWidget', 'FloatWidget', 'RangeWidget', 'PasswordWidget', 'TimeWidget', 'DateWidget', 'DateTimeWidget', 'CheckboxWidget', 'SelectWidget', 'FileWidget', 'ImageWidget')

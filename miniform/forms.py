@@ -80,6 +80,41 @@ class BaseForm:
         )
         return form_fieldset
 
+    def form_dict(self) -> dict:
+        """
+        Метод приведения полей в формат словаря.
+        Returns:
+            dict
+        """
+        data = {}
+        data_error = {}
+        for field, widget in self.fields.items():
+            if field not in self.exclude:
+                result, data_to_dict = widget.get_data_to_dict()
+                if result:
+                    data.update(data_to_dict)
+                else:
+                    data_error.update(data_to_dict)
+        if data_error:
+            return data_error
+        return data
+
+    def form_json(self, indent=None, ensure_ascii=None):
+        """
+        Метод приведения словаря полей формы в формат json.
+        Args:
+            indent: int
+            ensure_ascii: bool
+
+        Returns:
+            json
+        """
+        return json.dumps(
+            self.form_dict(),
+            indent=indent if indent else 2,
+            ensure_ascii=ensure_ascii if ensure_ascii else False,
+        )
+
     def __getitem__(self, item) -> AbstractWidget:
         """
         Args:
