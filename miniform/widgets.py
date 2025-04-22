@@ -433,33 +433,6 @@ class BaseWidget(AbstractWidget):
         self.field = self.get_input()
         return self.__html__()
 
-    def update_attrs2(
-            self,
-            extra_attrs=None,
-            obj: Union[
-                dict[str, str], dict[int, str], dict[int, int], dict[str, int]
-            ] = None,
-            prefix=None,
-            options: Union[
-                DeclarativeBase,
-                Union[dict[str, str], dict[int, str], dict[int, int], dict[str, int]],
-            ] = None,
-    ):
-        if options:
-            self.options = {}
-            self.options.update(options)
-        if extra_attrs is not None:
-            for attr in extra_attrs.copy():
-                if attr in ["disabled", "required", "hidden", "readonly", "value"]:
-                    extra_attrs.pop(attr)
-            self.extra_attrs.update(extra_attrs)
-        if prefix:
-            self.prefix = prefix
-        if obj:
-            self.init_data = self.init_data.copy()
-            self.init_data[self.name] = obj.get(f"{self.name}", "")
-        return self
-
     def convert(self, value):
         if not value:
             return None
@@ -520,7 +493,7 @@ class TextAreaWidget(BaseWidget):
         html_icon = Markup(" <em>*</em>") if self.required else Markup("")
         attrs = self.get_widget_attrs()
         value = self.get_widget_prefix()
-        init_value = escape(str(self.init_data.get(self.name, "")))
+        init_value = str(self.init_data.get(self.name, ""))
         extra_attrs = self.get_extra_attrs()
         return (
             Markup(
